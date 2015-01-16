@@ -271,61 +271,32 @@ class WP_User_Avatar {
    * @uses int $wpua_resize_h
    * @uses bool $wpua_resize_upload
    * @uses int $wpua_resize_w
-   * @uses add_post_meta()
-   * @uses delete_metadata()
    * @uses get_blog_prefix()
    * @uses is_wp_error()
-   * @uses update_post_meta()
-   * @uses update_user_meta()
-   * @uses wp_delete_attachment()
    * @uses wp_generate_attachment_metadata()
-   * @uses wp_get_image_editor()
    * @uses wp_handle_upload()
    * @uses wp_insert_attachment()
-   * @uses WP_Query()
    * @uses wp_read_image_metadata()
-   * @uses wp_reset_query()
    * @uses wp_update_attachment_metadata()
    * @uses wp_upload_dir()
    * @uses wpua_is_author_or_above()
+   * @uses wpua_delete_avatar_attachments()
+   * @uses wpua_set_avatar()
+   * @uses wpua_resize_image()
    */
   public static function wpua_action_process_option_update($user_id) {
     global $blog_id, $post, $wpdb, $wp_user_avatar, $wpua_resize_crop, $wpua_resize_h, $wpua_resize_upload, $wpua_resize_w;
     // Check if user has publish_posts capability
     if($wp_user_avatar->wpua_is_author_or_above()) {
       $wpua_id = isset($_POST['wp-user-avatar']) ? strip_tags($_POST['wp-user-avatar']) : "";
-      // Remove old attachment postmeta
-      delete_metadata('post', null, '_wp_attachment_wp_user_avatar', $user_id, true);
-      // Create new attachment postmeta
-      add_post_meta($wpua_id, '_wp_attachment_wp_user_avatar', $user_id);
-      // Update usermeta
-      update_user_meta($user_id, $wpdb->get_blog_prefix($blog_id).'user_avatar', $wpua_id);
+      WP_User_Avatar::wpua_set_avatar($user_id, $wpua_id);
     } else {
       // Remove attachment info if avatar is blank
       if(isset($_POST['wp-user-avatar']) && empty($_POST['wp-user-avatar'])) {
         // Delete other uploads by user
-        $q = array(
-          'author' => $user_id,
-          'post_type' => 'attachment',
-          'post_status' => 'inherit',
-          'posts_per_page' => '-1',
-          'meta_query' => array(
-            array(
-              'key' => '_wp_attachment_wp_user_avatar',
-              'value' => "",
-              'compare' => '!='
-            )
-          )
-        );
-        $avatars_wp_query = new WP_Query($q);
-        while($avatars_wp_query->have_posts()) : $avatars_wp_query->the_post();
-          wp_delete_attachment($post->ID);
-        endwhile;
-        wp_reset_query();
-        // Remove attachment postmeta
-        delete_metadata('post', null, '_wp_attachment_wp_user_avatar', $user_id, true);
-        // Remove usermeta
-        update_user_meta($user_id, $wpdb->get_blog_prefix($blog_id).'user_avatar', "");
+        WP_User_Avatar::wpua_delete_avatar_attachments($user_id);
+        //Unset Avatar
+        WP_User_Avatar::wpua_set_avatar($user_id, '');
       }
       // Create attachment from upload
       if(isset($_POST['submit']) && $_POST['submit'] && !empty($_FILES['wpua-file'])) {
@@ -336,17 +307,7 @@ class WP_User_Avatar {
         if(is_writeable($upload_dir['path'])) {
           if(!empty($type) && preg_match('/(jpe?g|gif|png)$/i', $type)) {
             // Resize uploaded image
-            if((bool) $wpua_resize_upload == 1) {
-              // Original image
-              $uploaded_image = wp_get_image_editor($file['file']);
-              // Check for errors
-              if(!is_wp_error($uploaded_image)) {
-                // Resize image
-                $uploaded_image->resize($wpua_resize_w, $wpua_resize_h, $wpua_resize_crop);
-                // Save image
-                $resized_image = $uploaded_image->save($file['file']);
-              }
-            }
+            WP_User_Avatar::wpua_resize_image($file['file']);
             // Break out file info
             $name_parts = pathinfo($name);
             $name = trim(substr($name, 0, -(1 + strlen($name_parts['extension']))));
@@ -374,34 +335,97 @@ class WP_User_Avatar {
             $attachment_id = wp_insert_attachment($attachment, $file);
             if(!is_wp_error($attachment_id)) {
               // Delete other uploads by user
-              $q = array(
-                'author' => $user_id,
-                'post_type' => 'attachment',
-                'post_status' => 'inherit',
-                'posts_per_page' => '-1',
-                'meta_query' => array(
-                  array(
-                    'key' => '_wp_attachment_wp_user_avatar',
-                    'value' => "",
-                    'compare' => '!='
-                  )
-                )
-              );
-              $avatars_wp_query = new WP_Query($q);
-              while($avatars_wp_query->have_posts()) : $avatars_wp_query->the_post();
-                wp_delete_attachment($post->ID);
-              endwhile;
-              wp_reset_query();
+              WP_User_Avatar::wpua_delete_avatar_attachments($user_id);
+
               wp_update_attachment_metadata($attachment_id, wp_generate_attachment_metadata($attachment_id, $file));
-              // Remove old attachment postmeta
-              delete_metadata('post', null, '_wp_attachment_wp_user_avatar', $user_id, true);
-              // Create new attachment postmeta
-              update_post_meta($attachment_id, '_wp_attachment_wp_user_avatar', $user_id);
-              // Update usermeta
-              update_user_meta($user_id, $wpdb->get_blog_prefix($blog_id).'user_avatar', $attachment_id);
+
+              WP_User_Avatar::wpua_set_avatar($user_id, $attachment_id);
             }
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Set avatar
+   * @since 1.9.13~hugopoi
+   * @param int $user_id
+   * @param int $attachment_id
+   * @uses delete_metadata()
+   * @uses $blog_id
+   * @uses $wpdb
+   * @uses add_post_meta()
+   * @uses update_user_meta()
+   */
+  public static function wpua_set_avatar($user_id, $attachment_id){
+    global $wpdb, $blog_id;
+
+    // Remove attachment postmeta
+    delete_metadata('post', null, '_wp_attachment_wp_user_avatar', $user_id, true);
+    // Create new attachment postmeta
+    add_post_meta($attachment_id, '_wp_attachment_wp_user_avatar', $user_id);
+    // Update usermeta
+    update_user_meta($user_id, $wpdb->get_blog_prefix($blog_id).'user_avatar', $attachment_id);
+
+  }
+
+  /**
+   * Delete all avatar attachements for user
+   * @since 1.9.13~hugopoi
+   * @param int $user_id
+   * @uses WP_Query()
+   * @uses wp_delete_attachment()
+   * @uses wp_reset_query()
+   * @uses delete_metadata()
+   */
+  public static function wpua_delete_avatar_attachments($user_id){
+    $q = array(
+      'author' => $user_id,
+      'post_type' => 'attachment',
+      'post_status' => 'inherit',
+      'posts_per_page' => '-1',
+      'meta_query' => array(
+        array(
+          'key' => '_wp_attachment_wp_user_avatar',
+          'value' => "",
+          'compare' => '!='
+        )
+      )
+    );
+    $avatars_wp_query = new WP_Query($q);
+    while($avatars_wp_query->have_posts()){
+      $avatars_wp_query->the_post();
+      wp_delete_attachment($post->ID);
+    }
+    wp_reset_query();
+  }
+
+  /**
+   * Resize image
+   * @since 1.9.13~hugopoi
+   * @param string $filepath
+   * @uses $wpua_resize_upload
+   * @uses $wpua_resize_w
+   * @uses $wpua_resize_h
+   * @uses $wpua_resize_crop
+   * @uses wp_get_image_editor()
+   * @uses is_wp_error()
+   */
+  public static function wpua_resize_image($filepath){
+    global $wpua_resize_upload, $wpua_resize_w, $wpua_resize_h, $wpua_resize_crop;
+    if((bool) $wpua_resize_upload == 1) {
+      // Original image
+      $uploaded_image = wp_get_image_editor($filepath);
+      // Check for errors
+      if(!is_wp_error($uploaded_image)) {
+        // Resize image
+        $uploaded_image->resize($wpua_resize_w, $wpua_resize_h, $wpua_resize_crop);
+        // Save image
+        $resized_image = $uploaded_image->save($filepath);
+        return $resized_image;
+      }else{
+        return $uploaded_image;
       }
     }
   }
