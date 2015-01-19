@@ -371,7 +371,7 @@ class WP_User_Avatar_Functions {
       // Add dimensions to img only if numeric size was specified
       $dimensions = is_numeric($size) ? ' width="'.$wpua_image[1].'" height="'.$wpua_image[2].'"' : "";
       // Construct the img tag
-      $avatar = '<img src="'.$wpua_image[0].'"'.$dimensions.' alt="'.$alt.'" class="avatar avatar-'.$size.' wp-user-avatar wp-user-avatar-'.$size.$alignclass.' photo" />';
+      $avatar = '<img src="http://'.implode("/", array_map("rawurlencode", explode("/", substr($wpua_image[0], 7)))).'"'.$dimensions.' alt="'.$alt.'" class="avatar avatar-'.$size.' wp-user-avatar wp-user-avatar-'.$size.$alignclass.' photo" />';
     } else {
       // Check for custom image sizes
       if(in_array($size, $all_sizes)) {
